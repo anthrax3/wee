@@ -4,6 +4,10 @@ use warnings;
 use base 'Exporter';
 our @EXPORT = qw(
   to_app
+  cathome
+  env
+  req
+  param
   get
   post
   render
@@ -13,6 +17,8 @@ our @EXPORT = qw(
 );
 
 use Encode ();
+use File::Basename qw(dirname);
+use File::Spec::Functions 'catfile';
 
 our $APP;
 init((caller)[1]);
@@ -22,8 +28,18 @@ sub init {
 
     $APP = bless {}, __PACKAGE__;
     $caller ||= (caller(0))[1];
+    $APP->{home} = dirname($caller);
     $APP->{includes} = _read_includes($caller);
 }
+
+sub cathome { catfile($APP->{home}, @_) }
+
+sub env { $_ }
+
+sub req {
+    $_->{'wee.req'} ||= do { require Plack::Request; Plack::Request->new($_) };
+}
+sub param ($) { req->param(@_) }
 
 sub route {
     my ($method, $path, $handler) = @_;
@@ -121,6 +137,8 @@ sub to_app {
             return http_error 'Not found', 404
               unless ($m = $APP->{routes}->{$method})
               && ($c = $m->{$path_info});
+
+            local $_ = $env;
 
             my $res = $c->($env);
             return $res if ref $res eq 'ARRAY';
