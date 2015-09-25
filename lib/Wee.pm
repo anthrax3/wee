@@ -28,7 +28,7 @@ sub init {
 
     $APP = bless {}, __PACKAGE__;
     $caller ||= (caller(0))[1];
-    $APP->{home} = dirname($caller);
+    $APP->{home}     = dirname($caller);
     $APP->{includes} = _read_includes($caller);
 }
 
@@ -57,11 +57,11 @@ sub param ($) {
     if (env->{CONTENT_TYPE} eq 'application/x-www-form-urlencoded') {
         my $body = body;
 
-        my %pairs =_parse_urlencoded($body);
-        return $pairs{$_[0]}
+        my %pairs = _parse_urlencoded($body);
+        return $pairs{$_[0]};
     }
 
-    ()
+    ();
 }
 
 sub _parse_urlencoded ($) {
@@ -75,7 +75,7 @@ sub route {
 
     my $ref = ref $handler eq 'CODE' ? $handler : sub { $handler };
 
-    $APP->{routes}->{$method}->{$path} = $ref;
+    push @{$APP->{routes}}, {method => $method, path => $path, cb => $ref};
 }
 
 sub get  { route 'GET',  @_ }
@@ -162,14 +162,28 @@ sub to_app {
         my $method    = $env->{REQUEST_METHOD} || 'GET';
 
         eval {
-            my ($m, $c);
+            my $m;
+
+            my @captures;
+            foreach my $route (@{$APP->{routes}}) {
+                if (ref $route->{path} eq 'Regexp') {
+                    if (@captures = $path_info =~ m/^$route->{path}$/) {
+                        $m = $route;
+                        last;
+                    }
+                }
+                elsif ($route->{path} eq $path_info) {
+                    $m = $route;
+                    last;
+                }
+            }
+
             return http_error 'Not found', 404
-              unless ($m = $APP->{routes}->{$method})
-              && ($c = $m->{$path_info});
+              unless $m && $m->{method} eq $method;
 
             local $_ = $env;
 
-            my $res = $c->($env);
+            my $res = $m->{cb}->(@captures);
             return $res if ref $res eq 'ARRAY';
 
             $res = Encode::encode('UTF-8', $res) if Encode::is_utf8($res);
