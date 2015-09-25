@@ -34,12 +34,41 @@ sub init {
 
 sub cathome { catfile($APP->{home}, @_) }
 
-sub env { $_ }
+sub env () { $_ }
 
-sub req {
-    $_->{'wee.req'} ||= do { require Plack::Request; Plack::Request->new($_) };
+sub body () {
+    my $body = '';
+    while (env->{'psgi.input'}->read(my $buf, 8192) > 0) {
+        $body .= $buf;
+    }
+    $body;
 }
-sub param ($) { req->param(@_) }
+
+sub uri_unescape ($) {
+    defined $_[0] ? do { $_[0] =~ s/%(\d\d)/chr(hex($1))/eg; $_[0] } : undef;
+}
+
+sub query ($) {
+    my %pairs = _parse_urlencoded(env->{QUERY_STRING});
+    $pairs{$_[0]};
+}
+
+sub param ($) {
+    if (env->{CONTENT_TYPE} eq 'application/x-www-form-urlencoded') {
+        my $body = body;
+
+        my %pairs =_parse_urlencoded($body);
+        return $pairs{$_[0]}
+    }
+
+    ()
+}
+
+sub _parse_urlencoded ($) {
+    map { uri_unescape($_) }
+      map { my ($k, $v) = split /=/, $_, 2 } grep { length } split /\&/,
+      $_[0];
+}
 
 sub route {
     my ($method, $path, $handler) = @_;
