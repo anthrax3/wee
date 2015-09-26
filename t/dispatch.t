@@ -9,7 +9,7 @@ use Wee ();
 subtest 'dispatch to simple text' => sub {
     Wee::init();
 
-    Wee::get('/', 'Hi there');
+    Wee::route('/', 'Hi there');
 
     my $res = Wee::to_app->();
     is $res->[0], 200;
@@ -19,7 +19,7 @@ subtest 'dispatch to simple text' => sub {
 subtest 'dispatch to array reference' => sub {
     Wee::init();
 
-    Wee::get('/', [500, [], ['Error']]);
+    Wee::route('/', [500, [], ['Error']]);
 
     my $res = Wee::to_app->();
     is $res->[0], 500;
@@ -29,7 +29,7 @@ subtest 'dispatch to array reference' => sub {
 subtest 'dispatch to code reference' => sub {
     Wee::init();
 
-    Wee::get('/', sub { 'Hi there' });
+    Wee::route('/', sub { 'Hi there' });
 
     my $res = Wee::to_app->();
     is $res->[0], 200;
@@ -47,7 +47,7 @@ subtest 'return 404 when no route found' => sub {
 subtest 'catch error' => sub {
     Wee::init();
 
-    Wee::get('/', sub { die 'error' });
+    Wee::route('/', sub { die 'error' });
 
     my $res = Wee::to_app->();
     is $res->[0], 500;
@@ -57,7 +57,7 @@ subtest 'catch error' => sub {
 subtest 'dispatch to template' => sub {
     Wee::init();
 
-    Wee::get('/', sub { Wee::render('template.wee') });
+    Wee::route('/', sub { Wee::render('template.wee') });
 
     my $res = Wee::to_app->();
     is $res->[0], 200;
@@ -67,7 +67,7 @@ subtest 'dispatch to template' => sub {
 subtest 'throw when template not found' => sub {
     Wee::init();
 
-    Wee::get('/', sub { Wee::render('unknown.wee') });
+    Wee::route('/', sub { Wee::render('unknown.wee') });
 
     my $res = Wee::to_app->();
     is $res->[0], 500;

@@ -6,10 +6,10 @@ our @EXPORT = qw(
   to_app
   cathome
   env
-  req
+  query
   param
-  get
-  post
+  body
+  route
   render
   slurp
   http_error
@@ -28,6 +28,7 @@ sub init {
 
     $APP = bless {}, __PACKAGE__;
     $caller ||= (caller(0))[1];
+    $APP->{routes}   = [];
     $APP->{home}     = dirname($caller);
     $APP->{includes} = _read_includes($caller);
 }
@@ -71,25 +72,25 @@ sub _parse_urlencoded ($) {
 }
 
 sub route {
-    my ($method, $path, $handler) = @_;
+    my $path = shift;
+    my %handlers = @_ == 1 ? (GET => $_[0]) : @_;
 
-    my $ref = ref $handler eq 'CODE' ? $handler : sub { $handler };
+    my $route = {path => $path};
+    foreach my $method (keys %handlers) {
+        my $handler = $handlers{$method};
 
-    push @{$APP->{routes}}, {method => $method, path => $path, cb => $ref};
+        my $ref = ref $handler eq 'CODE' ? $handler : sub { $handler };
+
+        $route->{methods}->{$method} = $ref;
+    }
+
+    push @{$APP->{routes}}, $route;
 }
-
-sub get  { route 'GET',  @_ }
-sub post { route 'POST', @_ }
 
 sub http_error {
     my ($message, $code) = @_;
 
     $code ||= 500;
-
-    if (my $output = eval { render($code, code => $code, message => $message) })
-    {
-        $message = $output;
-    }
 
     return [$code, [], [$message]];
 }
@@ -178,12 +179,13 @@ sub to_app {
                 }
             }
 
-            return http_error 'Not found', 404
-              unless $m && $m->{method} eq $method;
+            return http_error 'Not found', 404 unless $m;
+            return http_error 'Method not allowed', 405
+              unless my $cb = $m->{methods}->{$method};
 
             local $_ = $env;
 
-            my $res = $m->{cb}->(@captures);
+            my $res = $cb->(@captures);
             return $res if ref $res eq 'ARRAY';
 
             $res = Encode::encode('UTF-8', $res) if Encode::is_utf8($res);
