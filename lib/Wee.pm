@@ -8,6 +8,7 @@ our @EXPORT = qw(
   env
   query
   param
+  upload
   body
   route
   render
@@ -16,7 +17,11 @@ our @EXPORT = qw(
   redirect
 );
 
+$SIG{INT} = sub { exit 0 };
+
 use Encode ();
+use List::Util qw(first);
+use File::Temp qw(tempfile);
 use File::Basename qw(dirname);
 use File::Spec::Functions 'catfile';
 
@@ -63,6 +68,68 @@ sub param ($) {
     }
 
     ();
+}
+
+sub upload ($) {
+    my ($name) = @_;
+
+    if (env->{CONTENT_TYPE} =~ qr{^multipart/form-data; boundary=(.*?)$}) {
+        my $boundary = "--$1";
+
+        my @parts;
+        my $part = {};
+
+        my $body  = '';
+        my $state = 'first_boundary';
+      MORE: while (env->{'psgi.input'}->read(my $buf, 8192) > 0) {
+            $body .= $buf;
+
+            if ($state eq 'first_boundary') {
+                $body =~ s{^$boundary\r\n}{} || next MORE;
+                $state = 'part_headers';
+            }
+            if ($state eq 'part_headers') {
+                $body =~ s{^(.*?)\r\n\r\n}{}ms || next MORE;
+                $state = 'part_body';
+
+                my $headers = [split /\r\n/, $1];
+                foreach my $header (@$headers) {
+                    if ($header =~ m/^Content-Disposition: form-data; name="(.*?)"; filename="(.*?)"$/) {
+                        $part->{name}     = $1;
+                        $part->{filename} = $2;
+                    }
+                    elsif ($header =~ m/^Content-Type: (.*)$/) {
+                        $part->{type} = $1;
+                    }
+                }
+            }
+            if ($state eq 'part_body') {
+                my $fh = $part->{fh} ||= do {
+                    my ($fh, $path) = tempfile(undef, UNLINK => 1);
+                    $part->{path} = $path;
+                    $fh;
+                };
+
+                if ($body =~ s{^(.*?)\r\n$boundary(--)?}{}ms) {
+                    print $fh $1;
+                    seek $fh, 0, 0;
+                    push @parts, {%$part};
+
+                    last if $2;
+
+                    $state = 'part_headers';
+                    %$part = ();
+                }
+                elsif (length($body) > length($boundary) + 2) {
+                    print $fh substr($body, 0, length($body) - length($boundary) - 2, '');
+                }
+            }
+        }
+
+        return first { $_->{name} eq $name } @parts;
+    }
+
+    return;
 }
 
 sub _parse_urlencoded ($) {
