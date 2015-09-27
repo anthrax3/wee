@@ -12,6 +12,7 @@ our @EXPORT = qw(
   body
   route
   render
+  serve
   slurp
   http_error
   redirect
@@ -177,6 +178,7 @@ sub render {
 
     my $template = ref $name eq 'SCALAR' ? $$name : $APP->{includes}->{$name}
       or die "Template not found";
+    $template = $template->{content} if ref $template eq 'HASH';
 
     my $ref = ref $template eq 'CODE' ? $template : compile_template($template);
     $APP->{includes}->{$name} = $ref unless ref $name;
@@ -220,6 +222,15 @@ sub compile_template {
     no strict 'refs';
     my $ref = eval $code or die $@;
     return $ref;
+}
+
+sub serve {
+    my ($name) = @_;
+
+    my $include = $APP->{includes}->{$name};
+    die 'Include not found' unless $include;
+
+    [200, ['Content-Type' => $include->{type}], [$include->{content}]];
 }
 
 sub to_app {
@@ -283,7 +294,17 @@ sub _read_includes {
     my %includes;
     foreach my $include (grep { !/^\s+$/ } split /@@\s+/, $includes // '') {
         my ($name, $content) = map { chomp; $_ } split /^/, $include, 2;
-        $includes{$name} = $content;
+
+        my $type = 'text/plain';
+        if ($name =~ s/^(.*?),\s*(.*)$//) {
+            $name = $1;
+            $type = $2;
+        }
+        elsif ($name =~ m/\.html$/) {
+            $type = 'text/html';
+        }
+
+        $includes{$name} = {content => $content, type => $type};
     }
     return \%includes;
 }
