@@ -61,20 +61,32 @@ sub query ($) {
 }
 
 sub param ($) {
+    _parse_body();
+
+    env->{'wee.params'}->{$_[0]};
+}
+
+sub upload ($) {
+    _parse_body();
+
+    first { $_->{name} eq $_[0] } @{ env->{'wee.uploads'} };
+}
+
+sub _parse_urlencoded ($) {
+    map { uri_unescape($_) }
+      map { my ($k, $v) = split /=/, $_, 2 } grep { length } split /\&/,
+      $_[0];
+}
+
+sub _parse_body {
+    return if env->{'wee.body.parsed'};
     if (env->{CONTENT_TYPE} eq 'application/x-www-form-urlencoded') {
         my $body = body;
 
         my %pairs = _parse_urlencoded($body);
-        return $pairs{$_[0]};
+        env->{'wee.params'} = \%pairs;
     }
-
-    ();
-}
-
-sub upload ($) {
-    my ($name) = @_;
-
-    if (env->{CONTENT_TYPE} =~ qr{^multipart/form-data; boundary=(.*?)$}) {
+    elsif (env->{CONTENT_TYPE} =~ qr{^multipart/form-data; boundary=(.*?)$}) {
         my $boundary = "--$1";
 
         my @parts;
@@ -85,58 +97,73 @@ sub upload ($) {
       MORE: while (env->{'psgi.input'}->read(my $buf, 8192) > 0) {
             $body .= $buf;
 
-            if ($state eq 'first_boundary') {
-                $body =~ s{^$boundary\r\n}{} || next MORE;
-                $state = 'part_headers';
-            }
-            if ($state eq 'part_headers') {
-                $body =~ s{^(.*?)\r\n\r\n}{}ms || next MORE;
-                $state = 'part_body';
-
-                my $headers = [split /\r\n/, $1];
-                foreach my $header (@$headers) {
-                    if ($header =~ m/^Content-Disposition: form-data; name="(.*?)"; filename="(.*?)"$/) {
-                        $part->{name}     = $1;
-                        $part->{filename} = $2;
-                    }
-                    elsif ($header =~ m/^Content-Type: (.*)$/) {
-                        $part->{type} = $1;
-                    }
-                }
-            }
-            if ($state eq 'part_body') {
-                my $fh = $part->{fh} ||= do {
-                    my ($fh, $path) = tempfile(undef, UNLINK => 1);
-                    $part->{path} = $path;
-                    $fh;
-                };
-
-                if ($body =~ s{^(.*?)\r\n$boundary(--)?}{}ms) {
-                    print $fh $1;
-                    seek $fh, 0, 0;
-                    push @parts, {%$part};
-
-                    last if $2;
-
+            while (length $body) {
+                if ($state eq 'first_boundary') {
+                    $body =~ s{^$boundary\r\n}{} || next MORE;
                     $state = 'part_headers';
-                    %$part = ();
                 }
-                elsif (length($body) > length($boundary) + 2) {
-                    print $fh substr($body, 0, length($body) - length($boundary) - 2, '');
+                elsif ($state eq 'part_headers') {
+                    $body =~ s{^(.*?)\r\n\r\n}{}ms || next MORE;
+                    $state = 'part_body';
+
+                    my $headers = [split /\r\n/, $1];
+                    foreach my $header (@$headers) {
+                        if ($header =~ m/^Content-Disposition: form-data; name="(.*?)"; filename="(.*?)"$/) {
+                            $part->{name}     = $1;
+                            $part->{filename} = $2;
+                        }
+                        elsif ($header =~ m/^Content-Disposition: form-data; name="(.*?)"$/) {
+                            $part->{name} = $1;
+                        }
+                        elsif ($header =~ m/^Content-Type: (.*)$/) {
+                            $part->{type} = $1;
+                        }
+                    }
+                }
+                elsif ($state eq 'part_body') {
+                    if (!$part->{fh} && $part->{filename}) {
+                        my ($fh, $path) = tempfile(undef, UNLINK => 1);
+                        $part->{path} = $path;
+                        $part->{fh} = $fh;
+                    }
+
+                    my $fh = $part->{fh};
+                    if ($body =~ s{^(.*?)?\r\n$boundary(--)?\r\n}{}ms) {
+                        if ($fh) {
+                            print $fh $1;
+                            seek $fh, 0, 0;
+                        }
+                        else {
+                            $part->{body} .= $1;
+                        }
+                        push @parts, {%$part};
+
+                        last MORE if $2;
+
+                        $state = 'part_headers';
+                        %$part = ();
+                    }
+                    elsif (length($body) > length($boundary) + 6) {
+                        my $content = substr($body, 0, length($body) - length($boundary) - 6, '');
+                        if ($fh) {
+                            print $fh $content;
+                        }
+                        else {
+                            $part->{body} .= $content;
+                        }
+                    }
+                    else {
+                        next MORE;
+                    }
                 }
             }
         }
 
-        return first { $_->{name} eq $name } @parts;
+        env->{'wee.params'}  = {map {$_->{name} => $_->{body}} grep { !$_->{filename} } @parts};
+        env->{'wee.uploads'} = [grep { $_->{filename} } @parts];
     }
 
-    return;
-}
-
-sub _parse_urlencoded ($) {
-    map { uri_unescape($_) }
-      map { my ($k, $v) = split /=/, $_, 2 } grep { length } split /\&/,
-      $_[0];
+    env->{'wee.body.parsed'}++;
 }
 
 sub route {

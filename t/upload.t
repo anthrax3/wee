@@ -13,7 +13,7 @@ subtest 'parses uploads' => sub {
         "--------------------------7583b6d42beddaaf\r\n"
       . "Content-Disposition: form-data; name=\"file\"; filename=\"file.bin\"\r\n"
       . "Content-Type: application/octet-stream\r\n" . "\r\n" . "hello" . "\r\n"
-      . "--------------------------7583b6d42beddaaf--";
+      . "--------------------------7583b6d42beddaaf--\r\n";
 
     open my $fh, '<', \$data;
     $_ = {
@@ -31,6 +31,31 @@ subtest 'parses uploads' => sub {
     is <$upload_fh>, 'hello';
 };
 
+subtest 'parses uploads mixed' => sub {
+    local $_;
+
+    my $data =
+        "--------------------------7583b6d42beddaaf\r\n"
+      . "Content-Disposition: form-data; name=\"file\"; filename=\"file.bin\"\r\n"
+      . "Content-Type: application/octet-stream\r\n" . "\r\n" . "hello" . "\r\n"
+      . "--------------------------7583b6d42beddaaf\r\n"
+      . "Content-Disposition: form-data; name=\"foo\"\r\n" . "\r\n"
+      . "bar\r\n"
+      . "--------------------------7583b6d42beddaaf--\r\n";
+
+    open my $fh, '<', \$data;
+    $_ = {
+        CONTENT_TYPE => 'multipart/form-data; '
+          . 'boundary=------------------------7583b6d42beddaaf',
+        'psgi.input' => $fh
+    };
+
+    my $upload = Wee::upload('file');
+    is $upload->{name}, 'file';
+
+    is Wee::param('foo'), 'bar';
+};
+
 subtest 'parses uploads byte by byte' => sub {
     local $_;
 
@@ -39,7 +64,7 @@ subtest 'parses uploads byte by byte' => sub {
           . "Content-Disposition: form-data; name=\"file\"; filename=\"file.bin\"\r\n"
           . "Content-Type: application/octet-stream\r\n" . "\r\n" . "hello"
           . "\r\n"
-          . "--------------------------7583b6d42beddaaf--");
+          . "--------------------------7583b6d42beddaaf--\r\n");
 
     $_ = {
         CONTENT_TYPE => 'multipart/form-data; '
@@ -79,5 +104,6 @@ sub read {
     $_[0] = substr($self->{buffer}, $self->{pos}, 1);
     $self->{pos}++;
     return 0 if $self->{pos} > length $self->{buffer};
+
     return 1;
 }
